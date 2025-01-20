@@ -3,8 +3,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime
-import altair as alt
-import io
+import numpy as np
 
 # Set page config
 st.set_page_config(
@@ -31,50 +30,111 @@ st.markdown("""
             text-align: center;
             margin-bottom: 2rem;
         }
+        .small-text {
+            font-size: 0.8rem;
+            color: #666;
+        }
     </style>
 """, unsafe_allow_html=True)
+
+def process_cashflow_data(df):
+    """Process cashflow data from the Cashflow Process sheet"""
+    # Skip header rows and find the actual data
+    df = df.dropna(how='all')
+    inflow_start = df[df['Unnamed: 0'] == 'Inflows'].index[0]
+    df = df.iloc[inflow_start:]
+    
+    # Separate inflows and outflows
+    inflows = df[df['Unnamed: 0'] == 'Inflows'].index[0]
+    outflows = df[df['Unnamed: 0'] == 'Outflows'].index[0]
+    
+    # Calculate total inflows and outflows
+    inflow_data = df.iloc[inflows+1:outflows].sum(numeric_only=True)
+    outflow_data = df.iloc[outflows+1:].sum(numeric_only=True)
+    
+    return inflow_data.sum(), outflow_data.sum()
+
+def process_bank_balances(df):
+    """Process bank balance data"""
+    # Find the actual data start
+    start_idx = df[df['Unnamed: 0'] == 'A/c #'].index[0]
+    df = df.iloc[start_idx:]
+    df.columns = df.iloc[0]
+    df = df.iloc[1:]
+    
+    # Clean up and convert balance column
+    df['Balance'] = pd.to_numeric(df['Balance'], errors='coerce')
+    return df
+
+def process_sales_data(df):
+    """Process monthly sales tracker data"""
+    # Find the actual data start
+    sales_data = df[df['Unnamed: 0'] == 'Sr No'].index[0]
+    df = df.iloc[sales_data:]
+    df.columns = df.iloc[0]
+    df = df.iloc[1:]
+    
+    # Convert relevant columns to numeric
+    numeric_cols = ['Area', 'Sale Consideration']
+    for col in numeric_cols:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+    
+    return df
+
+def process_bplan_data(df):
+    """Process BPlan tracker data"""
+    # First row contains dates
+    dates = df.iloc[0, 2:].dropna()
+    # Second row contains month numbers
+    months = df.iloc[1, 2:].dropna()
+    # Get category and values
+    categories = df.iloc[2:, 1]
+    values = df.iloc[2:, 2:len(dates)+2]
+    
+    # Create processed dataframe
+    processed_df = pd.DataFrame(values.values, 
+                              index=categories,
+                              columns=dates)
+    return processed_df
 
 def load_excel_data(uploaded_file):
     """Load and process Excel data from uploaded file"""
     try:
-        # Create a dictionary to store DataFrames
-        data_dict = {}
+        # Read all sheets
+        xls = pd.ExcelFile(uploaded_file)
         
-        # Read required sheets
-        required_sheets = [
-            "BPlan Tracker",
-            "Monthly Sale Tracker ",
-            "Bank Balances",
-            "Cashflow Process",
-            "Admin Expense Tracker "
-        ]
+        # Process each sheet
+        data = {}
         
-        # Read all sheets at once
-        with pd.ExcelFile(uploaded_file) as xls:
-            available_sheets = xls.sheet_names
+        # Cashflow Process
+        if 'Cashflow Process' in xls.sheet_names:
+            cashflow_df = pd.read_excel(xls, 'Cashflow Process')
+            data['inflow'], data['outflow'] = process_cashflow_data(cashflow_df)
+        
+        # Bank Balances
+        if 'Bank Balances' in xls.sheet_names:
+            bank_df = pd.read_excel(xls, 'Bank Balances')
+            data['bank'] = process_bank_balances(bank_df)
+        
+        # Monthly Sale Tracker
+        if 'Monthly Sale Tracker ' in xls.sheet_names:
+            sales_df = pd.read_excel(xls, 'Monthly Sale Tracker ')
+            data['sales'] = process_sales_data(sales_df)
+        
+        # BPlan Tracker
+        if 'BPlan Tracker' in xls.sheet_names:
+            bplan_df = pd.read_excel(xls, 'BPlan Tracker')
+            data['bplan'] = process_bplan_data(bplan_df)
+        
+        # Admin Expense Tracker
+        if 'Admin Expense Tracker ' in xls.sheet_names:
+            expense_df = pd.read_excel(xls, 'Admin Expense Tracker ')
+            data['expenses'] = expense_df
             
-            # Check if all required sheets are present
-            missing_sheets = [sheet for sheet in required_sheets if sheet not in available_sheets]
-            if missing_sheets:
-                st.error(f"Missing required sheets: {', '.join(missing_sheets)}")
-                return None
-            
-            # Load each required sheet
-            for sheet_name in required_sheets:
-                df = pd.read_excel(xls, sheet_name=sheet_name)
-                # Basic data cleaning
-                df = df.replace([pd.NA, float('inf'), float('-inf')], pd.NA)
-                data_dict[sheet_name.strip().lower().replace(' ', '_')] = df
-        
-        return {
-            "bplan": data_dict["bplan_tracker"],
-            "sales": data_dict["monthly_sale_tracker"],
-            "bank": data_dict["bank_balances"],
-            "cashflow": data_dict["cashflow_process"],
-            "expenses": data_dict["admin_expense_tracker"]
-        }
+        return data
     except Exception as e:
-        st.error(f"Error loading Excel file: {str(e)}")
+        st.error(f"Error processing Excel file: {str(e)}")
         return None
 
 def render_overview(data):
@@ -83,182 +143,138 @@ def render_overview(data):
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
-        try:
-            total_balance = data['bank']['Balance'].sum() if 'Balance' in data['bank'].columns else 0
+        if 'bank' in data:
+            total_balance = data['bank']['Balance'].sum()
             st.metric(
                 label="Total Bank Balance",
                 value=f"₹{total_balance:,.2f}",
                 delta="4.5%"
             )
-        except:
-            st.metric(label="Total Bank Balance", value="N/A")
     
     with col2:
-        try:
-            total_sales = data['sales']['Total Sales'].sum() if 'Total Sales' in data['sales'].columns else 0
+        if 'inflow' in data and 'outflow' in data:
+            net_flow = data['inflow'] - data['outflow']
             st.metric(
-                label="Monthly Sales",
+                label="Net Cashflow",
+                value=f"₹{net_flow:,.2f}",
+                delta=f"{(net_flow/data['inflow']*100):.1f}%" if data['inflow'] != 0 else "0%"
+            )
+    
+    with col3:
+        if 'sales' in data:
+            total_sales = data['sales']['Sale Consideration'].sum()
+            st.metric(
+                label="Total Sales Value",
                 value=f"₹{total_sales:,.2f}",
                 delta="2.8%"
             )
-        except:
-            st.metric(label="Monthly Sales", value="N/A")
-    
-    with col3:
-        st.metric(
-            label="Expense Utilization",
-            value="87%",
-            delta="-2.1%",
-            delta_color="inverse"
-        )
     
     with col4:
-        st.metric(
-            label="Project Completion",
-            value="73%",
-            delta="5.2%"
-        )
+        if 'bplan' in data:
+            completion = (data['bplan'].iloc[:, :-3].sum().sum() / 
+                        data['bplan']['Budgeted'].sum() * 100)
+            st.metric(
+                label="Plan Completion",
+                value=f"{completion:.1f}%",
+                delta=f"{(completion-95):.1f}%"
+            )
 
-    # Cashflow Analysis
-    st.subheader("Cashflow Analysis")
-    try:
-        if 'Inflow' in data['cashflow'].columns and 'Outflow' in data['cashflow'].columns:
-            cashflow_data = data['cashflow'].melt(
-                id_vars=['Date'] if 'Date' in data['cashflow'].columns else [],
-                value_vars=['Inflow', 'Outflow'],
-                var_name='Flow Type',
-                value_name='Amount'
-            )
-            
-            cashflow_chart = px.line(
-                cashflow_data,
-                x='Date',
-                y='Amount',
-                color='Flow Type',
-                title='Cash Inflow vs Outflow Trend'
-            )
-            st.plotly_chart(cashflow_chart, use_container_width=True)
-        else:
-            st.warning("Required columns not found in cashflow data")
-    except Exception as e:
-        st.error(f"Error rendering cashflow analysis: {str(e)}")
+    # Bank Balance Distribution
+    if 'bank' in data:
+        st.subheader("Bank Balance Distribution")
+        fig_bank = px.pie(
+            data['bank'],
+            values='Balance',
+            names='Account Description',
+            title='Distribution of Funds Across Accounts'
+        )
+        st.plotly_chart(fig_bank, use_container_width=True)
+
+    # Monthly Sales Trend
+    if 'sales' in data:
+        st.subheader("Sales Analysis")
+        sales_by_month = data['sales'].groupby('Feed in 30-Month-Year format')['Sale Consideration'].sum().reset_index()
+        sales_trend = px.line(
+            sales_by_month,
+            x='Feed in 30-Month-Year format',
+            y='Sale Consideration',
+            title='Monthly Sales Trend'
+        )
+        st.plotly_chart(sales_trend, use_container_width=True)
 
 def render_financial_analysis(data):
     """Render the financial analysis section"""
     st.header("Financial Analysis")
     
-    try:
-        # Bank Balance Distribution
-        if 'Balance' in data['bank'].columns and 'Account Type' in data['bank'].columns:
-            st.subheader("Bank Balance Distribution")
-            fig_bank = px.pie(
-                data['bank'],
-                values='Balance',
-                names='Account Type',
-                title='Distribution of Funds Across Accounts'
-            )
-            st.plotly_chart(fig_bank, use_container_width=True)
-        else:
-            st.warning("Required columns not found in bank balance data")
+    if 'bplan' in data:
+        # Budget vs Actual Analysis
+        st.subheader("Budget vs Actual Expenditure")
+        budget_comp = pd.DataFrame({
+            'Category': data['bplan'].index,
+            'Actual': data['bplan'].iloc[:, :-3].sum(axis=1),
+            'Budgeted': data['bplan']['Budgeted']
+        })
         
-        # Budget vs Actual Comparison
-        if all(col in data['bplan'].columns for col in ['Category', 'Budgeted Amount', 'Actual Amount']):
-            st.subheader("Budget vs Actual Expenditure")
-            budget_comparison = go.Figure()
-            budget_comparison.add_trace(go.Bar(
-                name='Budgeted',
-                x=data['bplan']['Category'],
-                y=data['bplan']['Budgeted Amount'],
-            ))
-            budget_comparison.add_trace(go.Bar(
-                name='Actual',
-                x=data['bplan']['Category'],
-                y=data['bplan']['Actual Amount'],
-            ))
-            budget_comparison.update_layout(barmode='group')
-            st.plotly_chart(budget_comparison, use_container_width=True)
-        else:
-            st.warning("Required columns not found in budget data")
-    except Exception as e:
-        st.error(f"Error rendering financial analysis: {str(e)}")
+        fig = go.Figure(data=[
+            go.Bar(name='Actual', x=budget_comp['Category'], y=budget_comp['Actual']),
+            go.Bar(name='Budgeted', x=budget_comp['Category'], y=budget_comp['Budgeted'])
+        ])
+        fig.update_layout(barmode='group')
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # Variance Analysis
+        st.subheader("Budget Variance Analysis")
+        budget_comp['Variance'] = budget_comp['Actual'] - budget_comp['Budgeted']
+        budget_comp['Variance %'] = (budget_comp['Variance'] / budget_comp['Budgeted'] * 100).round(2)
+        
+        fig_variance = px.bar(
+            budget_comp,
+            x='Category',
+            y='Variance',
+            color='Variance',
+            title='Budget Variance by Category'
+        )
+        st.plotly_chart(fig_variance, use_container_width=True)
 
-def render_sales_tracker(data):
-    """Render the sales tracker section"""
+def render_sales_analysis(data):
+    """Render the sales analysis section"""
     st.header("Sales Analysis")
     
-    try:
-        # Monthly Sales Trend
-        if 'Month' in data['sales'].columns and 'Total Sales' in data['sales'].columns:
-            sales_trend = px.line(
-                data['sales'],
-                x='Month',
-                y='Total Sales',
-                title='Monthly Sales Trend'
-            )
-            st.plotly_chart(sales_trend, use_container_width=True)
-        else:
-            st.warning("Required columns not found for sales trend")
-        
-        # Sales by Category
+    if 'sales' in data:
         col1, col2 = st.columns(2)
         
         with col1:
-            if 'Amount' in data['sales'].columns and 'Category' in data['sales'].columns:
-                sales_category = px.pie(
-                    data['sales'],
-                    values='Amount',
-                    names='Category',
-                    title='Sales Distribution by Category'
-                )
-                st.plotly_chart(sales_category)
-            else:
-                st.warning("Required columns not found for sales categories")
+            # Sales by Unit Type
+            sales_by_bhk = data['sales'].groupby('BHK')['Sale Consideration'].sum().reset_index()
+            fig_bhk = px.pie(
+                sales_by_bhk,
+                values='Sale Consideration',
+                names='BHK',
+                title='Sales Distribution by Unit Type'
+            )
+            st.plotly_chart(fig_bhk)
         
         with col2:
-            if 'Amount' in data['sales'].columns and 'Location' in data['sales'].columns:
-                sales_location = px.bar(
-                    data['sales'],
-                    x='Location',
-                    y='Amount',
-                    title='Sales by Location'
-                )
-                st.plotly_chart(sales_location)
-            else:
-                st.warning("Required columns not found for sales location")
-    except Exception as e:
-        st.error(f"Error rendering sales tracker: {str(e)}")
-
-def render_expense_analysis(data):
-    """Render the expense analysis section"""
-    st.header("Expense Analysis")
-    
-    try:
-        # Monthly Expense Trend
-        if 'Month' in data['expenses'].columns and 'Total Expense' in data['expenses'].columns:
-            expense_trend = px.line(
-                data['expenses'],
-                x='Month',
-                y='Total Expense',
-                title='Monthly Expense Trend'
+            # Sales by Tower
+            sales_by_tower = data['sales'].groupby('Tower')['Sale Consideration'].sum().reset_index()
+            fig_tower = px.bar(
+                sales_by_tower,
+                x='Tower',
+                y='Sale Consideration',
+                title='Sales by Tower'
             )
-            st.plotly_chart(expense_trend, use_container_width=True)
-        else:
-            st.warning("Required columns not found for expense trend")
+            st.plotly_chart(fig_tower)
         
-        # Expense Categories
-        if 'Category' in data['expenses'].columns and 'Amount' in data['expenses'].columns:
-            expense_categories = px.bar(
-                data['expenses'],
-                x='Category',
-                y='Amount',
-                title='Expenses by Category',
-                color='Category'
-            )
-            st.plotly_chart(expense_categories, use_container_width=True)
-        else:
-            st.warning("Required columns not found for expense categories")
-    except Exception as e:
-        st.error(f"Error rendering expense analysis: {str(e)}")
+        # Area vs Price Analysis
+        st.subheader("Area vs Price Analysis")
+        fig_scatter = px.scatter(
+            data['sales'],
+            x='Area',
+            y='Sale Consideration',
+            color='BHK',
+            title='Unit Area vs Sale Price'
+        )
+        st.plotly_chart(fig_scatter, use_container_width=True)
 
 def main():
     st.title("📊 Project Management Dashboard")
@@ -275,16 +291,15 @@ def main():
     uploaded_file = st.file_uploader("Choose Excel file", type=['xlsx', 'xls'])
     
     if uploaded_file is not None:
-        # Show loading spinner while processing data
         with st.spinner('Loading and processing data...'):
             data = load_excel_data(uploaded_file)
         
-        if data is not None:
+        if data:
             # Sidebar
             st.sidebar.header("Dashboard Controls")
             selected_view = st.sidebar.selectbox(
                 "Select View",
-                ["Overview", "Financial Analysis", "Sales Tracker", "Expense Analysis"]
+                ["Overview", "Financial Analysis", "Sales Analysis"]
             )
             
             # Render selected view
@@ -292,14 +307,14 @@ def main():
                 render_overview(data)
             elif selected_view == "Financial Analysis":
                 render_financial_analysis(data)
-            elif selected_view == "Sales Tracker":
-                render_sales_tracker(data)
-            elif selected_view == "Expense Analysis":
-                render_expense_analysis(data)
+            elif selected_view == "Sales Analysis":
+                render_sales_analysis(data)
             
             # Footer
             st.markdown("---")
             st.markdown(f"Dashboard last updated: {datetime.now().strftime('%B %d, %Y %H:%M:%S')}")
+        else:
+            st.error("Could not process the Excel file. Please check the file format and try again.")
     else:
         st.info("👆 Upload an Excel file to get started")
 
