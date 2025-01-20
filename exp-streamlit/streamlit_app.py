@@ -10,7 +10,7 @@ uploaded_file = st.file_uploader("Upload your Excel file", type=['xlsx'])
 if uploaded_file:
     st.success("File uploaded successfully!")
     # Load the Excel file
-    excel_data = pd.ExcelFile(uploaded_file)
+    excel_data = pd.ExcelFile(uploaded_file, engine="openpyxl")
     sheet_names = excel_data.sheet_names
 
     # Select sheet to analyze
