@@ -688,35 +688,44 @@ def create_project_progress(account_data, outflow_df=None):
     with acc_tabs[1]:
         # Create improved balance trend visualization
         fig_balance = go.Figure()
-        
-        # Color palette for different accounts
         colors = px.colors.qualitative.Set3
         
         for idx, (acc_name, acc_df) in enumerate(account_data.items()):
             if 'Running Total' in acc_df.columns and not acc_df.empty:
-                # Create date index if not present
-                if 'Txn Date' in acc_df.columns:
-                    x_values = pd.to_datetime(acc_df['Txn Date'])
-                else:
-                    x_values = range(len(acc_df))
-                
-                # Add trace with better formatting
-                fig_balance.add_trace(go.Scatter(
-                    name=acc_name,
-                    x=x_values,
-                    y=acc_df['Running Total']/10000000,
-                    mode='lines',
-                    line=dict(
-                        width=2,
-                        color=colors[idx % len(colors)]
-                    ),
-                    hovertemplate=(
-                        f"{acc_name}<br>" +
-                        "Date: %{x}<br>" +
-                        "Balance: ₹%{y:.2f} Cr<br>" +
-                        "<extra></extra>"
-                    )
-                ))
+                try:
+                    # Create index for x-axis
+                    if 'Txn Date' in acc_df.columns:
+                        # Handle date parsing with error checking
+                        x_values = pd.to_datetime(acc_df['Txn Date'], format='%Y-%m-%d', errors='coerce')
+                        # Filter out rows where date parsing failed
+                        mask = x_values.notna()
+                        x_values = x_values[mask]
+                        y_values = acc_df['Running Total'][mask]/10000000
+                    else:
+                        # Use sequential numbers if no dates
+                        x_values = list(range(len(acc_df)))
+                        y_values = acc_df['Running Total']/10000000
+                    
+                    # Add trace with better formatting
+                    fig_balance.add_trace(go.Scatter(
+                        name=acc_name,
+                        x=x_values,
+                        y=y_values,
+                        mode='lines',
+                        line=dict(
+                            width=2,
+                            color=colors[idx % len(colors)]
+                        ),
+                        hovertemplate=(
+                            f"{acc_name}<br>" +
+                            "Date: %{x}<br>" +
+                            "Balance: ₹%{y:.2f} Cr<br>" +
+                            "<extra></extra>"
+                        )
+                    ))
+                except Exception as e:
+                    print(f"Error processing {acc_name}: {str(e)}")
+                    continue
         
         fig_balance.update_layout(
             title={
@@ -736,7 +745,8 @@ def create_project_progress(account_data, outflow_df=None):
                 title='Transaction Date',
                 gridcolor='rgba(255,255,255,0.1)',
                 zeroline=True,
-                zerolinecolor='rgba(255,255,255,0.2)'
+                zerolinecolor='rgba(255,255,255,0.2)',
+                type='date'  # Specify x-axis as date type
             ),
             plot_bgcolor='rgba(0,0,0,0)',
             paper_bgcolor='rgba(0,0,0,0)',
@@ -779,40 +789,55 @@ def create_project_progress(account_data, outflow_df=None):
             if len(acc_df) > 0:
                 # Clean and prepare data for display
                 display_cols = []
+                
+                # Handle date column with proper parsing
                 if 'Txn Date' in acc_df.columns:
-                    display_cols.append('Txn Date')
-                if 'Description' in acc_df.columns:
-                    display_cols.append('Description')
-                if 'Dr/Cr' in acc_df.columns:
-                    display_cols.append('Dr/Cr')
-                if 'Amount' in acc_df.columns:
-                    display_cols.append('Amount')
-                if 'Running Total' in acc_df.columns:
-                    display_cols.append('Running Total')
+                    try:
+                        acc_df['Txn Date'] = pd.to_datetime(acc_df['Txn Date'], format='%Y-%m-%d', errors='coerce')
+                        display_cols.append('Txn Date')
+                    except Exception as e:
+                        print(f"Error parsing dates: {str(e)}")
                 
-                display_df = acc_df[display_cols].copy()
+                # Add other columns
+                for col in ['Description', 'Dr/Cr', 'Amount', 'Running Total']:
+                    if col in acc_df.columns:
+                        display_cols.append(col)
                 
-                # Format numeric columns
-                if 'Amount' in display_df.columns:
-                    display_df['Amount'] = display_df['Amount'].map(lambda x: f"₹{x/10000000:,.2f} Cr")
-                if 'Running Total' in display_df.columns:
-                    display_df['Running Total'] = display_df['Running Total'].map(lambda x: f"₹{x/10000000:,.2f} Cr")
-                
-                # Display the DataFrame with better formatting
-                st.dataframe(
-                    display_df,
-                    height=400,
-                    use_container_width=True
-                )
-                
-                # Add summary stats
-                if 'Amount' in acc_df.columns:
+                if display_cols:
+                    display_df = acc_df[display_cols].copy()
+                    
+                    # Format the display DataFrame
+                    formatted_df = display_df.copy()
+                    
+                    # Format date if present
+                    if 'Txn Date' in formatted_df.columns:
+                        formatted_df['Txn Date'] = formatted_df['Txn Date'].dt.strftime('%Y-%m-%d')
+                    
+                    # Format numeric columns
+                    numeric_cols = ['Amount', 'Running Total']
+                    for col in numeric_cols:
+                        if col in formatted_df.columns:
+                            formatted_df[col] = formatted_df[col].apply(
+                                lambda x: f"₹{x/10000000:,.2f} Cr" if pd.notnull(x) else ""
+                            )
+                    
+                    # Display the DataFrame
+                    st.dataframe(
+                        formatted_df,
+                        height=400,
+                        use_container_width=True
+                    )
+                    
+                    # Add summary stats
                     col1, col2 = st.columns(2)
                     with col1:
                         st.info(f"Total Transactions: {len(acc_df):,}")
                     with col2:
-                        total_amount = acc_df['Amount'].sum()
-                        st.info(f"Total Amount: {format_indian_currency(total_amount)}")
+                        if 'Amount' in acc_df.columns:
+                            total_amount = acc_df['Amount'].sum()
+                            st.info(f"Total Amount: {format_indian_currency(total_amount)}")
+                else:
+                    st.warning("No displayable columns found in the data.")
             else:
                 st.warning("No transactions found for this account.")
     
