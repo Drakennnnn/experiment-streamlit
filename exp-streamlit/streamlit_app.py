@@ -16,7 +16,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Enhanced Custom CSS with better box sizing
+# Enhanced Custom CSS
 st.markdown("""
     <style>
         .main {
@@ -64,35 +64,47 @@ st.markdown("""
             background-color: rgba(255, 255, 255, 0.05);
             border-radius: 0.3rem;
         }
-        .custom-info-box {
-            background-color: #262730;
-            padding: 1rem;
-            border-radius: 0.5rem;
-            border-left: 4px solid #4A90E2;
-            margin: 1rem 0;
-        }
     </style>
 """, unsafe_allow_html=True)
 
-def format_indian_currency(amount, units='crores'):
-    """Format amount in Indian currency with units"""
-    if units == 'crores':
-        return f"₹{amount/10000000:.2f} Cr"
-    elif units == 'lakhs':
-        return f"₹{amount/100000:.2f} L"
-    else:
-        return f"₹{amount:,.2f}"
+def format_indian_currency(amount):
+    """Format amount in Indian currency with crore denomination"""
+    try:
+        value = float(amount)
+        crore = value / 10000000
+        return f"₹{crore:.2f} Cr"
+    except:
+        return "₹0.00 Cr"
 
-def standardize_bhk(bhk_value):
-    """Standardize BHK notation"""
-    if pd.isna(bhk_value):
-        return 'Others'
-    bhk_str = str(bhk_value).upper().strip()
-    # Remove any spaces or hyphens and ensure BHK suffix
-    bhk_str = bhk_str.replace(' ', '').replace('-', '')
-    if not bhk_str.endswith('BHK'):
-        bhk_str = bhk_str + 'BHK'
-    return bhk_str
+def load_sales_data(file):
+    """Load and process sales data"""
+    df = pd.read_excel(file, sheet_name="Monthly Sale Tracker ", header=None)
+    
+    # Find header row
+    header_row = df[df[0] == 'Sr No'].index[0]
+    headers = df.iloc[header_row]
+    df = df.iloc[header_row + 1:].copy()
+    df.columns = headers
+    
+    # Convert numeric columns
+    numeric_cols = ['Area', 'Sale Consideration', 'BSP']
+    for col in numeric_cols:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+    
+    # Convert date
+    if 'Feed in 30-Month-Year format' in df.columns:
+        df['Feed in 30-Month-Year format'] = pd.to_datetime(
+            df['Feed in 30-Month-Year format'], 
+            errors='coerce'
+        )
+    
+    # Standardize BHK format
+    if 'BHK' in df.columns:
+        df['BHK'] = df['BHK'].fillna('Other')
+        df['BHK'] = df['BHK'].astype(str).str.replace('-', '')
+    
+    return df.dropna(subset=['Sale Consideration'])
 
 def load_bank_data(file):
     """Load and process bank balance data"""
@@ -116,45 +128,11 @@ def load_outflow_data(file):
     """Load and process project outflow data"""
     try:
         df = pd.read_excel(file, sheet_name="Project Outflow Statement")
-        
-        # Convert date and amount columns
-        if 'Date of Payment' in df.columns:
-            df['Date of Payment'] = pd.to_datetime(df['Date of Payment'], errors='coerce')
-        if 'Gross Amount' in df.columns:
-            df['Gross Amount'] = pd.to_numeric(df['Gross Amount'], errors='coerce')
-        
+        df['Date of Payment'] = pd.to_datetime(df['Date of Payment'], errors='coerce')
+        df['Gross Amount'] = pd.to_numeric(df['Gross Amount'], errors='coerce')
         return df.dropna(subset=['Gross Amount'])
     except:
         return None
-
-def load_sales_data(file):
-    """Load and process sales data with standardized BHK notation"""
-    df = pd.read_excel(file, sheet_name="Monthly Sale Tracker ", header=None)
-    
-    # Find header row
-    header_row = df[df[0] == 'Sr No'].index[0]
-    headers = df.iloc[header_row]
-    df = df.iloc[header_row + 1:].copy()
-    df.columns = headers
-    
-    # Convert numeric columns
-    numeric_cols = ['Area', 'Sale Consideration', 'BSP']
-    for col in numeric_cols:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors='coerce')
-    
-    # Convert date
-    if 'Feed in 30-Month-Year format' in df.columns:
-        df['Feed in 30-Month-Year format'] = pd.to_datetime(
-            df['Feed in 30-Month-Year format'], 
-            errors='coerce'
-        )
-    
-    # Standardize BHK notation
-    if 'BHK' in df.columns:
-        df['BHK'] = df['BHK'].apply(standardize_bhk)
-    
-    return df.dropna(subset=['Sale Consideration'])
 
 def create_enhanced_sales_analysis(sales_df):
     """Create enhanced sales analysis dashboard"""
@@ -195,165 +173,79 @@ def create_enhanced_sales_analysis(sales_df):
     
     st.markdown("""
         <div class="description-text">
-            💡 Key metrics show overall sales performance. Total sales represent cumulative value, 
-            while average price indicates the mean unit cost. Area reflects total space sold.
+            💡 Key metrics showing overall sales performance. Numbers include all transactions 
+            to date, with positive growth trends in both value and volume.
         </div>
     """, unsafe_allow_html=True)
     
     # Enhanced Area vs Price Analysis
     st.markdown("### Area vs Price Analysis")
     
-    # Create tabs for different views
-    price_tabs = st.tabs(["Scatter Plot", "Price Distribution", "Price/Sq.ft Analysis"])
+    # Create scatter plot
+    fig_scatter = px.scatter(
+        sales_df,
+        x='Area',
+        y='Sale Consideration',
+        color='BHK',
+        size='Sale Consideration',
+        title='Area vs Price Relationship',
+        labels={
+            'Area': 'Area (sq.ft)',
+            'Sale Consideration': 'Price (₹ Cr)',
+            'BHK': 'Unit Type'
+        }
+    )
     
-    with price_tabs[0]:
-        # Enhanced scatter plot
-        fig_scatter = px.scatter(
-            sales_df,
-            x='Area',
-            y='Sale Consideration',
-            color='BHK',
-            size='Sale Consideration',
-            hover_data={
-                'Area': ':.0f',
-                'Sale Consideration': lambda x: format_indian_currency(x),
-                'BHK': True,
-                'Tower': True
-            },
-            title='Area vs Price Relationship',
-            labels={
-                'Area': 'Area (sq.ft)',
-                'Sale Consideration': 'Price'
-            }
-        )
-        
-        # Add trendlines for each BHK type
-        for bhk in sales_df['BHK'].unique():
-            bhk_data = sales_df[sales_df['BHK'] == bhk]
-            z = np.polyfit(bhk_data['Area'], bhk_data['Sale Consideration'], 1)
-            p = np.poly1d(z)
-            fig_scatter.add_scatter(
-                x=bhk_data['Area'],
-                y=p(bhk_data['Area']),
-                name=f'{bhk} Trend',
-                mode='lines',
-                line=dict(dash='dash'),
-                showlegend=True
-            )
-        
-        fig_scatter.update_layout(
-            plot_bgcolor='rgba(0,0,0,0)',
-            paper_bgcolor='rgba(0,0,0,0)',
-            font_color='white',
-            showlegend=True,
-            legend=dict(
-                bgcolor='rgba(0,0,0,0)',
-                font=dict(color='white')
-            ),
-            yaxis=dict(
-                tickformat='.2f',
-                tickprefix='₹',
-                ticksuffix=' Cr',
-                gridcolor='rgba(255,255,255,0.1)'
-            ),
-            xaxis=dict(
-                gridcolor='rgba(255,255,255,0.1)'
-            )
-        )
-        
-        st.plotly_chart(fig_scatter, use_container_width=True)
-        
-        st.markdown("""
-            <div class="description-text">
-                📌 This scatter plot shows the relationship between unit area and price. 
-                Each point represents a unit, with size indicating price. Dashed lines show price trends for each BHK type.
-                Hover over points for detailed information.
-            </div>
-        """, unsafe_allow_html=True)
+    # Update scatter plot
+    fig_scatter.update_traces(
+        hovertemplate="<br>".join([
+            "Area: %{x:,.0f} sq.ft",
+            "Price: ₹%{y:.2f} Cr",
+            "Type: %{marker.color}",
+            "<extra></extra>"
+        ])
+    )
     
-    with price_tabs[1]:
-        # Price distribution by BHK
-        fig_violin = go.Figure()
-        
-        for bhk in sorted(sales_df['BHK'].unique()):
-            subset = sales_df[sales_df['BHK'] == bhk]
-            fig_violin.add_trace(go.Violin(
-                x=subset['BHK'],
-                y=subset['Sale Consideration']/10000000,
-                name=bhk,
-                box_visible=True,
-                meanline_visible=True,
-                points="all"
-            ))
-        
-        fig_violin.update_layout(
-            title="Price Distribution by BHK Type",
-            yaxis_title="Price (₹ Cr)",
-            plot_bgcolor='rgba(0,0,0,0)',
-            paper_bgcolor='rgba(0,0,0,0)',
-            font_color='white',
-            showlegend=True
+    fig_scatter.update_layout(
+        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor='rgba(0,0,0,0)',
+        font_color='white',
+        showlegend=True,
+        legend=dict(
+            bgcolor='rgba(0,0,0,0)',
+            font=dict(color='white')
+        ),
+        yaxis=dict(
+            tickformat='.2f',
+            tickprefix='₹',
+            ticksuffix=' Cr'
         )
-        
-        st.plotly_chart(fig_violin, use_container_width=True)
-        
-        st.markdown("""
-            <div class="description-text">
-                📊 Violin plots show price distribution for each BHK type. 
-                The width indicates frequency at each price point. Box plots inside show median and quartiles.
-            </div>
-        """, unsafe_allow_html=True)
+    )
     
-    with price_tabs[2]:
-        # Price per sq.ft analysis
-        sales_df['Price_Per_Sqft'] = sales_df['Sale Consideration'] / sales_df['Area']
-        
-        fig_box = px.box(
-            sales_df,
-            x='BHK',
-            y='Price_Per_Sqft',
-            color='BHK',
-            title='Price per Sq.ft Distribution by BHK Type',
-            points="all"
-        )
-        
-        fig_box.update_layout(
-            yaxis_title="Price per Sq.ft (₹)",
-            plot_bgcolor='rgba(0,0,0,0)',
-            paper_bgcolor='rgba(0,0,0,0)',
-            font_color='white',
-            showlegend=False
-        )
-        
-        st.plotly_chart(fig_box, use_container_width=True)
-        
-        st.markdown("""
-            <div class="description-text">
-                💰 This analysis shows the distribution of price per square foot across different BHK types.
-                Box plots show median, quartiles, and outliers. Individual points represent actual units.
-            </div>
-        """, unsafe_allow_html=True)
+    st.plotly_chart(fig_scatter, use_container_width=True)
     
-    # Sales Distribution by BHK
-    st.markdown("### Sales Distribution Analysis")
+    # Distribution Analysis
+    st.markdown("### Price Distribution Analysis")
     
     col1, col2 = st.columns(2)
     
     with col1:
-        # Enhanced pie chart
+        # Sales distribution by BHK
         sales_by_bhk = sales_df.groupby('BHK')['Sale Consideration'].sum()
         fig_pie = px.pie(
-            values=sales_by_bhk.values,
+            values=sales_by_bhk.values/10000000,  # Convert to Cr
             names=sales_by_bhk.index,
-            title="Sales Distribution by BHK Type",
-            color_discrete_sequence=px.colors.qualitative.Set3
+            title="Sales Distribution by Unit Type"
         )
         
         fig_pie.update_traces(
             textinfo='percent+label',
-            hovertemplate="<b>%{label}</b><br>" +
-                        "Amount: ₹%{value:,.2f} Cr<br>" +
-                        "Percentage: %{percent}"
+            hovertemplate="<br>".join([
+                "Type: %{label}",
+                "Amount: ₹%{value:.2f} Cr",
+                "Percentage: %{percent}",
+                "<extra></extra>"
+            ])
         )
         
         fig_pie.update_layout(
@@ -365,15 +257,13 @@ def create_enhanced_sales_analysis(sales_df):
         st.plotly_chart(fig_pie, use_container_width=True)
     
     with col2:
-        # Add unit count distribution
+        # Unit count distribution
         units_by_bhk = sales_df.groupby('BHK').size()
         fig_bar = px.bar(
             x=units_by_bhk.index,
             y=units_by_bhk.values,
-            title="Number of Units Sold by BHK Type",
-            labels={'x': 'BHK Type', 'y': 'Number of Units'},
-            color=units_by_bhk.index,
-            color_discrete_sequence=px.colors.qualitative.Set3
+            title="Units Sold by Type",
+            labels={'x': 'Unit Type', 'y': 'Number of Units'}
         )
         
         fig_bar.update_layout(
@@ -384,7 +274,8 @@ def create_enhanced_sales_analysis(sales_df):
         )
         
         st.plotly_chart(fig_bar, use_container_width=True)
-# Monthly Sales Trend Analysis
+    
+    # Monthly Trend Analysis
     st.markdown("### Monthly Sales Trend")
     
     monthly_data = sales_df.groupby(
@@ -397,14 +288,14 @@ def create_enhanced_sales_analysis(sales_df):
     monthly_data.columns = ['Month', 'Total_Sales', 'Units_Sold', 'Area_Sold']
     monthly_data['Month'] = monthly_data['Month'].astype(str)
     
-    # Create the double-axis chart
+    # Create trend chart
     fig = make_subplots(specs=[[{"secondary_y": True}]])
     
     fig.add_trace(
         go.Bar(
             x=monthly_data['Month'],
             y=monthly_data['Total_Sales']/10000000,
-            name="Sales Value (₹ Cr)",
+            name="Sales Value",
             marker_color='rgba(74, 144, 226, 0.7)'
         ),
         secondary_y=False
@@ -430,37 +321,34 @@ def create_enhanced_sales_analysis(sales_df):
         legend=dict(
             bgcolor='rgba(0,0,0,0)',
             font=dict(color='white')
-        ),
-        hovermode='x unified'
+        )
     )
     
     fig.update_yaxes(
         title_text="Sales Value (₹ Cr)",
         secondary_y=False,
-        gridcolor='rgba(255,255,255,0.1)',
         tickprefix="₹",
         ticksuffix=" Cr"
     )
+    
     fig.update_yaxes(
-        title_text="Number of Units",
-        secondary_y=True,
-        gridcolor='rgba(255,255,255,0.1)'
+        title_text="Units Sold",
+        secondary_y=True
     )
     
-    st.plotly_chart(fig, use_container_width=True)
-    
+    st.plotly_chart(fig, use_container_width=True)    
     st.markdown("""
         <div class="description-text">
-            📈 The chart shows monthly sales trends. Bars represent total sales value (in Crores), 
-            while the line shows number of units sold. This helps visualize both value and volume trends.
+            📈 Monthly performance showing sales value (bars) and units sold (line).
+            Track both revenue and volume trends over time.
         </div>
     """, unsafe_allow_html=True)
 
 def create_financial_analysis(bank_df, outflow_df=None):
     """Create enhanced financial analysis dashboard"""
-    colored_header("💰 Financial Analysis", description="Comprehensive analysis of financial metrics and cash flows")
+    colored_header("💰 Financial Analysis", description="Analysis of financial metrics and cash flows")
     
-    # Key Metrics with better formatting
+    # Key Metrics
     col1, col2, col3 = st.columns(3)
     
     with col1:
@@ -485,42 +373,45 @@ def create_financial_analysis(bank_df, outflow_df=None):
             format_indian_currency(total_debit)
         )
     
-    st.markdown("""
-        <div class="description-text">
-            💸 These metrics show the overall financial position across all accounts. 
-            The balance trend indicates net cash position growth.
-        </div>
-    """, unsafe_allow_html=True)
+    # Bank Analysis Tabs
+    tabs = st.tabs(["Account Analysis", "Cash Flow", "Account Details"])
     
-    # Account Analysis Tabs
-    finance_tabs = st.tabs(["Account Balances", "Cash Flow Analysis", "Account Details"])
-    
-    with finance_tabs[0]:
-        fig_balance = go.Figure()
+    with tabs[0]:
+        st.markdown("### Account-wise Analysis")
         
-        # Add traces for Credit, Debit, and Balance
-        fig_balance.add_trace(go.Bar(
+        # Create account analysis visualization
+        fig_bank = go.Figure()
+        
+        fig_bank.add_trace(go.Bar(
             name='Credits',
             x=bank_df['Account Description'],
             y=bank_df['Credit']/10000000,
             marker_color='#4CAF50'
         ))
         
-        fig_balance.add_trace(go.Bar(
+        fig_bank.add_trace(go.Bar(
             name='Debits',
             x=bank_df['Account Description'],
             y=bank_df['Debit']/10000000,
             marker_color='#FF6B6B'
         ))
         
-        fig_balance.add_trace(go.Bar(
+        fig_bank.add_trace(go.Bar(
             name='Balance',
             x=bank_df['Account Description'],
             y=bank_df['Balance']/10000000,
             marker_color='#4A90E2'
         ))
         
-        fig_balance.update_layout(
+        fig_bank.update_traces(
+            hovertemplate="<br>".join([
+                "Account: %{x}",
+                "Amount: ₹%{y:.2f} Cr",
+                "<extra></extra>"
+            ])
+        )
+        
+        fig_bank.update_layout(
             barmode='group',
             title='Account-wise Financial Overview',
             yaxis_title='Amount (₹ Cr)',
@@ -528,76 +419,88 @@ def create_financial_analysis(bank_df, outflow_df=None):
             paper_bgcolor='rgba(0,0,0,0)',
             font_color='white',
             xaxis_tickangle=45,
+            height=500,
+            showlegend=True,
             legend=dict(
                 bgcolor='rgba(0,0,0,0)',
                 font=dict(color='white')
-            ),
-            height=600
+            )
         )
         
-        st.plotly_chart(fig_balance, use_container_width=True)
+        st.plotly_chart(fig_bank, use_container_width=True)
     
-    with finance_tabs[1]:
+    with tabs[1]:
         if outflow_df is not None:
-            # Monthly cash flow analysis
+            st.markdown("### Cash Flow Analysis")
+            
+            # Calculate monthly outflows
             outflow_df['Month'] = pd.to_datetime(outflow_df['Date of Payment']).dt.to_period('M')
-            monthly_outflow = outflow_df.groupby('Month')['Gross Amount'].sum().reset_index()
-            monthly_outflow['Month'] = monthly_outflow['Month'].astype(str)
+            monthly_flow = outflow_df.groupby('Month')['Gross Amount'].sum().reset_index()
+            monthly_flow['Month'] = monthly_flow['Month'].astype(str)
             
-            fig_cashflow = px.line(
-                monthly_outflow,
-                x='Month',
-                y='Gross Amount'/10000000,
-                title='Monthly Cash Outflow Trend',
-                labels={'Gross Amount': 'Amount (₹ Cr)', 'Month': 'Month'},
-                line_shape='linear'
-            )
+            # Create cash flow trend visualization
+            fig_flow = go.Figure()
             
-            fig_cashflow.update_traces(
-                line=dict(color="#FF6B6B", width=2),
-                mode='lines+markers'
-            )
+            fig_flow.add_trace(go.Scatter(
+                x=monthly_flow['Month'],
+                y=monthly_flow['Gross Amount']/10000000,
+                mode='lines+markers',
+                name='Monthly Outflow',
+                line=dict(color="#4A90E2", width=2),
+                hovertemplate="<br>".join([
+                    "Month: %{x}",
+                    "Amount: ₹%{y:.2f} Cr",
+                    "<extra></extra>"
+                ])
+            ))
             
-            fig_cashflow.update_layout(
+            fig_flow.update_layout(
+                title='Monthly Cash Flow Trend',
+                yaxis_title='Amount (₹ Cr)',
                 plot_bgcolor='rgba(0,0,0,0)',
                 paper_bgcolor='rgba(0,0,0,0)',
                 font_color='white',
                 xaxis_tickangle=45,
-                yaxis=dict(tickprefix="₹", ticksuffix=" Cr")
+                height=400
             )
             
-            st.plotly_chart(fig_cashflow, use_container_width=True)
+            st.plotly_chart(fig_flow, use_container_width=True)
             
-            # Payment category analysis
-            category_data = outflow_df.groupby('Code Tagging')['Gross Amount'].agg(['sum', 'count']).reset_index()
-            category_data.columns = ['Category', 'Total Amount', 'Number of Payments']
-            category_data = category_data.sort_values('Total Amount', ascending=True)
+            # Payment Category Analysis
+            st.markdown("### Payment Category Distribution")
+            
+            category_data = outflow_df.groupby('Code Tagging')['Gross Amount'].sum().reset_index()
+            category_data = category_data.sort_values('Gross Amount', ascending=True)
             
             fig_category = go.Figure()
             
             fig_category.add_trace(go.Bar(
-                y=category_data['Category'],
-                x=category_data['Total Amount']/10000000,
+                y=category_data['Code Tagging'],
+                x=category_data['Gross Amount']/10000000,
                 orientation='h',
-                name='Total Amount',
-                marker_color='#4A90E2'
+                marker_color='#4A90E2',
+                hovertemplate="<br>".join([
+                    "Category: %{y}",
+                    "Amount: ₹%{x:.2f} Cr",
+                    "<extra></extra>"
+                ])
             ))
             
             fig_category.update_layout(
-                title='Payment Distribution by Category',
+                title='Distribution by Payment Category',
                 xaxis_title='Amount (₹ Cr)',
                 plot_bgcolor='rgba(0,0,0,0)',
                 paper_bgcolor='rgba(0,0,0,0)',
                 font_color='white',
-                height=600,
-                xaxis=dict(tickprefix="₹", ticksuffix=" Cr")
+                height=500
             )
             
             st.plotly_chart(fig_category, use_container_width=True)
     
-    with finance_tabs[2]:
+    with tabs[2]:
         st.markdown("### Detailed Account Information")
         
+        # Format dataframe for display
         formatted_df = bank_df.copy()
         formatted_df[['Credit', 'Debit', 'Balance']] = formatted_df[['Credit', 'Debit', 'Balance']]/10000000
         
@@ -608,89 +511,7 @@ def create_financial_analysis(bank_df, outflow_df=None):
                 'Debit': '₹{:,.2f} Cr',
                 'Balance': '₹{:,.2f} Cr'
             }).background_gradient(cmap='RdYlGn', subset=['Balance'])
-            .set_properties(**{'text-align': 'right'})
         )
-
-def create_project_analysis(outflow_df):
-    """Create project progress analysis dashboard"""
-    colored_header("🏗️ Project Progress", description="Analysis of project execution and vendor payments")
-    
-    if outflow_df is not None:
-        # Payment Progress Metrics
-        total_paid = outflow_df['Gross Amount'].sum()
-        avg_payment = outflow_df['Gross Amount'].mean()
-        payment_count = len(outflow_df)
-        
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            st.metric(
-                "Total Payments Made",
-                format_indian_currency(total_paid)
-            )
-        
-        with col2:
-            st.metric(
-                "Average Payment Size",
-                format_indian_currency(avg_payment)
-            )
-        
-        with col3:
-            st.metric(
-                "Number of Payments",
-                f"{payment_count:,}"
-            )
-        
-        # Vendor Analysis Tabs
-        vendor_tabs = st.tabs(["Top Vendors", "Payment Categories", "Monthly Trends"])
-        
-        with vendor_tabs[0]:
-            # Top vendors analysis
-            vendor_data = outflow_df.groupby('Vendor').agg({
-                'Gross Amount': ['sum', 'count']
-            }).reset_index()
-            
-            vendor_data.columns = ['Vendor', 'Total Amount', 'Payment Count']
-            vendor_data = vendor_data.sort_values('Total Amount', ascending=False).head(10)
-            
-            fig_vendor = go.Figure()
-            
-            fig_vendor.add_trace(go.Bar(
-                x=vendor_data['Vendor'],
-                y=vendor_data['Total Amount']/10000000,
-                name='Total Amount',
-                marker_color='#4CAF50'
-            ))
-            
-            fig_vendor.add_trace(go.Scatter(
-                x=vendor_data['Vendor'],
-                y=vendor_data['Payment Count'],
-                name='Number of Payments',
-                yaxis='y2',
-                line=dict(color='#4A90E2', width=2)
-            ))
-            
-            fig_vendor.update_layout(
-                title='Top 10 Vendors by Payment Amount',
-                yaxis=dict(title='Amount (₹ Cr)', tickprefix="₹", ticksuffix=" Cr"),
-                yaxis2=dict(title='Number of Payments', overlaying='y', side='right'),
-                plot_bgcolor='rgba(0,0,0,0)',
-                paper_bgcolor='rgba(0,0,0,0)',
-                font_color='white',
-                xaxis_tickangle=45,
-                height=600,
-                showlegend=True,
-                legend=dict(bgcolor='rgba(0,0,0,0)')
-            )
-            
-            st.plotly_chart(fig_vendor, use_container_width=True)
-            
-            st.markdown("""
-                <div class="description-text">
-                    👥 This analysis shows the top vendors by payment amount. The bars represent total payments,
-                    while the line shows the number of transactions with each vendor.
-                </div>
-            """, unsafe_allow_html=True)
 
 def main():
     st.title("Project Management Dashboard")
@@ -699,7 +520,7 @@ def main():
         <div style='background-color: #262730; padding: 1rem; border-radius: 0.5rem; margin-bottom: 1rem;'>
             <h4 style='color: #4A90E2; margin: 0;'>Project Performance Analytics</h4>
             <p style='color: #FAFAFA; margin: 0.5rem 0 0 0;'>
-                Upload your project Excel file to view comprehensive analysis of sales, financials, and project progress.
+                Upload your project Excel file to view comprehensive analysis of sales and financials.
             </p>
         </div>
     """, unsafe_allow_html=True)
@@ -718,16 +539,14 @@ def main():
                 st.sidebar.title("Navigation")
                 page = st.sidebar.radio(
                     "Select Analysis",
-                    ["Sales Analysis", "Financial Overview", "Project Progress"]
+                    ["Sales Analysis", "Financial Overview"]
                 )
                 
                 # Display selected analysis
                 if page == "Sales Analysis":
                     create_enhanced_sales_analysis(sales_df)
-                elif page == "Financial Overview":
-                    create_financial_analysis(bank_df, outflow_df)
                 else:
-                    create_project_analysis(outflow_df)
+                    create_financial_analysis(bank_df, outflow_df)
                 
                 # Footer
                 st.markdown("---")
