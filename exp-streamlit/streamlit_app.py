@@ -686,27 +686,57 @@ def create_project_progress(account_data, outflow_df=None):
         """, unsafe_allow_html=True)
     
     with acc_tabs[1]:
-        # Create balance trend visualization
+        # Create improved balance trend visualization
         fig_balance = go.Figure()
         
-        for acc_name, acc_df in account_data.items():
+        # Color palette for different accounts
+        colors = px.colors.qualitative.Set3
+        
+        for idx, (acc_name, acc_df) in enumerate(account_data.items()):
             if 'Running Total' in acc_df.columns and not acc_df.empty:
+                # Create date index if not present
+                if 'Txn Date' in acc_df.columns:
+                    x_values = pd.to_datetime(acc_df['Txn Date'])
+                else:
+                    x_values = range(len(acc_df))
+                
+                # Add trace with better formatting
                 fig_balance.add_trace(go.Scatter(
                     name=acc_name,
+                    x=x_values,
                     y=acc_df['Running Total']/10000000,
                     mode='lines',
-                    hovertemplate="<br>".join([
-                        "Account: %{fullData.name}",
-                        "Balance: ₹%{y:.2f} Cr",
+                    line=dict(
+                        width=2,
+                        color=colors[idx % len(colors)]
+                    ),
+                    hovertemplate=(
+                        f"{acc_name}<br>" +
+                        "Date: %{x}<br>" +
+                        "Balance: ₹%{y:.2f} Cr<br>" +
                         "<extra></extra>"
-                    ])
+                    )
                 ))
         
         fig_balance.update_layout(
-            title='Account Balance Trends',
+            title={
+                'text': 'Account Balance Trends Over Time',
+                'y': 0.95,
+                'x': 0.5,
+                'xanchor': 'center',
+                'yanchor': 'top'
+            },
             yaxis=dict(
                 title='Balance (₹ Cr)',
-                gridcolor='rgba(255,255,255,0.1)'
+                gridcolor='rgba(255,255,255,0.1)',
+                zeroline=True,
+                zerolinecolor='rgba(255,255,255,0.2)'
+            ),
+            xaxis=dict(
+                title='Transaction Date',
+                gridcolor='rgba(255,255,255,0.1)',
+                zeroline=True,
+                zerolinecolor='rgba(255,255,255,0.2)'
             ),
             plot_bgcolor='rgba(0,0,0,0)',
             paper_bgcolor='rgba(0,0,0,0)',
@@ -715,12 +745,14 @@ def create_project_progress(account_data, outflow_df=None):
             legend=dict(
                 bgcolor='rgba(0,0,0,0)',
                 font=dict(color='white'),
-                yanchor="top",
-                y=0.99,
-                xanchor="left",
-                x=0.01
+                orientation="h",
+                yanchor="bottom",
+                y=1.02,
+                xanchor="right",
+                x=1
             ),
-            height=500
+            height=600,
+            margin=dict(t=100)
         )
         
         st.plotly_chart(fig_balance, use_container_width=True)
@@ -728,7 +760,7 @@ def create_project_progress(account_data, outflow_df=None):
         st.markdown("""
             <div class="description-text">
                 📈 Balance trends showing running totals for each account over time.
-                Track account performance and identify significant transactions.
+                Hover over lines to see detailed balance information.
             </div>
         """, unsafe_allow_html=True)
     
@@ -744,99 +776,244 @@ def create_project_progress(account_data, outflow_df=None):
         if selected_account in account_data:
             acc_df = account_data[selected_account].copy()
             
-            if 'Amount' in acc_df.columns and 'Running Total' in acc_df.columns:
-                # Convert to crores for display
-                display_df = acc_df.copy()
-                display_df['Amount'] = display_df['Amount']/10000000
-                display_df['Running Total'] = display_df['Running Total']/10000000
+            if len(acc_df) > 0:
+                # Clean and prepare data for display
+                display_cols = []
+                if 'Txn Date' in acc_df.columns:
+                    display_cols.append('Txn Date')
+                if 'Description' in acc_df.columns:
+                    display_cols.append('Description')
+                if 'Dr/Cr' in acc_df.columns:
+                    display_cols.append('Dr/Cr')
+                if 'Amount' in acc_df.columns:
+                    display_cols.append('Amount')
+                if 'Running Total' in acc_df.columns:
+                    display_cols.append('Running Total')
                 
+                display_df = acc_df[display_cols].copy()
+                
+                # Format numeric columns
+                if 'Amount' in display_df.columns:
+                    display_df['Amount'] = display_df['Amount'].map(lambda x: f"₹{x/10000000:,.2f} Cr")
+                if 'Running Total' in display_df.columns:
+                    display_df['Running Total'] = display_df['Running Total'].map(lambda x: f"₹{x/10000000:,.2f} Cr")
+                
+                # Display the DataFrame with better formatting
                 st.dataframe(
-                    display_df.style.format({
-                        'Amount': '₹{:,.2f} Cr',
-                        'Running Total': '₹{:,.2f} Cr'
-                    }).background_gradient(
-                        cmap='RdYlGn',
-                        subset=['Amount', 'Running Total']
-                    )
+                    display_df,
+                    height=400,
+                    use_container_width=True
                 )
+                
+                # Add summary stats
+                if 'Amount' in acc_df.columns:
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.info(f"Total Transactions: {len(acc_df):,}")
+                    with col2:
+                        total_amount = acc_df['Amount'].sum()
+                        st.info(f"Total Amount: {format_indian_currency(total_amount)}")
+            else:
+                st.warning("No transactions found for this account.")
     
     # Project Progress Section
     if outflow_df is not None and not outflow_df.empty:
         st.markdown("### Project Progress Tracking")
         
         try:
-            # Monthly progress tracking
+            # Calculate project metrics
+            total_outflow = outflow_df['Gross Amount'].sum()
+            total_categories = outflow_df['Code Tagging'].nunique()
+            avg_monthly_outflow = outflow_df.groupby(
+                pd.to_datetime(outflow_df['Date of Payment']).dt.to_period('M')
+            )['Gross Amount'].sum().mean()
+
+            # Display key metrics
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric(
+                    "Total Project Outflow",
+                    format_indian_currency(total_outflow),
+                    help="Total amount spent on the project"
+                )
+            with col2:
+                st.metric(
+                    "Work Categories",
+                    f"{total_categories}",
+                    help="Number of unique work categories"
+                )
+            with col3:
+                st.metric(
+                    "Avg. Monthly Outflow",
+                    format_indian_currency(avg_monthly_outflow),
+                    help="Average monthly spending"
+                )
+
+            # Monthly progress tracking with enhanced grouping
             monthly_progress = outflow_df.groupby(
                 pd.to_datetime(outflow_df['Date of Payment']).dt.to_period('M')
             ).agg({
                 'Gross Amount': ['sum', 'count'],
-                'Code Tagging': 'nunique'
+                'Code Tagging': ['nunique', lambda x: ', '.join(x.unique())]
             }).reset_index()
             
-            monthly_progress.columns = ['Month', 'Total_Amount', 'Transaction_Count', 'Category_Count']
+            monthly_progress.columns = ['Month', 'Total_Amount', 'Transaction_Count', 'Category_Count', 'Categories']
             monthly_progress['Month'] = monthly_progress['Month'].astype(str)
             
-            # Create progress visualization
-            fig_progress = make_subplots(specs=[[{"secondary_y": True}]])
+            # Create tabs for different views
+            progress_tabs = st.tabs(["Monthly Overview", "Category Analysis", "Trend Analysis"])
             
-            fig_progress.add_trace(
-                go.Bar(
-                    x=monthly_progress['Month'],
-                    y=monthly_progress['Total_Amount']/10000000,
-                    name="Monthly Outflow",
-                    marker_color='rgba(74, 144, 226, 0.7)'
-                ),
-                secondary_y=False
-            )
+            with progress_tabs[0]:
+                # Enhanced progress visualization
+                fig_progress = make_subplots(specs=[[{"secondary_y": True}]])
+                
+                # Add monthly outflow bars
+                fig_progress.add_trace(
+                    go.Bar(
+                        x=monthly_progress['Month'],
+                        y=monthly_progress['Total_Amount']/10000000,
+                        name="Monthly Outflow",
+                        marker_color='rgba(74, 144, 226, 0.7)',
+                        hovertemplate=(
+                            "Month: %{x}<br>" +
+                            "Amount: ₹%{y:.2f} Cr<br>" +
+                            "<extra></extra>"
+                        )
+                    ),
+                    secondary_y=False
+                )
+                
+                # Add category count line
+                fig_progress.add_trace(
+                    go.Scatter(
+                        x=monthly_progress['Month'],
+                        y=monthly_progress['Category_Count'],
+                        name="Active Categories",
+                        line=dict(color="#4CAF50", width=2),
+                        hovertemplate=(
+                            "Month: %{x}<br>" +
+                            "Categories: %{y}<br>" +
+                            "<extra></extra>"
+                        )
+                    ),
+                    secondary_y=True
+                )
+                
+                fig_progress.update_layout(
+                    title="Monthly Project Progress",
+                    plot_bgcolor='rgba(0,0,0,0)',
+                    paper_bgcolor='rgba(0,0,0,0)',
+                    font_color='white',
+                    showlegend=True,
+                    legend=dict(
+                        bgcolor='rgba(0,0,0,0)',
+                        font=dict(color='white'),
+                        orientation="h",
+                        yanchor="bottom",
+                        y=1.02,
+                        xanchor="right",
+                        x=1
+                    ),
+                    height=500,
+                    xaxis_tickangle=45,
+                    margin=dict(t=100)
+                )
+                
+                fig_progress.update_yaxes(
+                    title_text="Amount (₹ Cr)",
+                    secondary_y=False,
+                    tickprefix="₹",
+                    ticksuffix=" Cr",
+                    gridcolor='rgba(255,255,255,0.1)'
+                )
+                fig_progress.update_yaxes(
+                    title_text="Active Categories",
+                    secondary_y=True,
+                    gridcolor='rgba(255,255,255,0.1)'
+                )
+                
+                st.plotly_chart(fig_progress, use_container_width=True)
             
-            fig_progress.add_trace(
-                go.Scatter(
-                    x=monthly_progress['Month'],
-                    y=monthly_progress['Category_Count'],
-                    name="Categories",
-                    line=dict(color="#4CAF50", width=2)
-                ),
-                secondary_y=True
-            )
+            with progress_tabs[1]:
+                # Category-wise analysis
+                category_summary = outflow_df.groupby('Code Tagging').agg({
+                    'Gross Amount': ['sum', 'count'],
+                    'Date of Payment': ['min', 'max']
+                }).reset_index()
+                
+                category_summary.columns = ['Category', 'Total_Amount', 'Transaction_Count', 'Start_Date', 'End_Date']
+                category_summary = category_summary.sort_values('Total_Amount', ascending=True)
+                
+                fig_category = go.Figure()
+                
+                fig_category.add_trace(go.Bar(
+                    y=category_summary['Category'],
+                    x=category_summary['Total_Amount']/10000000,
+                    orientation='h',
+                    marker_color='#4A90E2',
+                    hovertemplate=(
+                        "Category: %{y}<br>" +
+                        "Amount: ₹%{x:.2f} Cr<br>" +
+                        "<extra></extra>"
+                    )
+                ))
+                
+                fig_category.update_layout(
+                    title="Expenditure by Category",
+                    xaxis_title="Amount (₹ Cr)",
+                    plot_bgcolor='rgba(0,0,0,0)',
+                    paper_bgcolor='rgba(0,0,0,0)',
+                    font_color='white',
+                    height=max(400, len(category_summary) * 25),
+                    margin=dict(l=200)
+                )
+                
+                st.plotly_chart(fig_category, use_container_width=True)
             
-            fig_progress.update_layout(
-                title="Monthly Project Progress",
-                plot_bgcolor='rgba(0,0,0,0)',
-                paper_bgcolor='rgba(0,0,0,0)',
-                font_color='white',
-                showlegend=True,
-                legend=dict(
-                    bgcolor='rgba(0,0,0,0)',
-                    font=dict(color='white')
-                ),
-                height=500,
-                xaxis_tickangle=45
-            )
-            
-            fig_progress.update_yaxes(
-                title_text="Amount (₹ Cr)",
-                secondary_y=False,
-                tickprefix="₹",
-                ticksuffix=" Cr",
-                gridcolor='rgba(255,255,255,0.1)'
-            )
-            fig_progress.update_yaxes(
-                title_text="Number of Categories",
-                secondary_y=True,
-                gridcolor='rgba(255,255,255,0.1)'
-            )
-            
-            st.plotly_chart(fig_progress, use_container_width=True)
+            with progress_tabs[2]:
+                # Cumulative trend analysis
+                cumulative_data = monthly_progress.copy()
+                cumulative_data['Cumulative_Amount'] = cumulative_data['Total_Amount'].cumsum()
+                
+                fig_trend = go.Figure()
+                
+                fig_trend.add_trace(go.Scatter(
+                    x=cumulative_data['Month'],
+                    y=cumulative_data['Cumulative_Amount']/10000000,
+                    mode='lines+markers',
+                    name='Cumulative Outflow',
+                    line=dict(color="#4A90E2", width=2),
+                    hovertemplate=(
+                        "Month: %{x}<br>" +
+                        "Cumulative Amount: ₹%{y:.2f} Cr<br>" +
+                        "<extra></extra>"
+                    )
+                ))
+                
+                fig_trend.update_layout(
+                    title="Cumulative Project Expenditure",
+                    yaxis_title="Amount (₹ Cr)",
+                    plot_bgcolor='rgba(0,0,0,0)',
+                    paper_bgcolor='rgba(0,0,0,0)',
+                    font_color='white',
+                    height=500,
+                    xaxis_tickangle=45
+                )
+                
+                st.plotly_chart(fig_trend, use_container_width=True)
             
             st.markdown("""
                 <div class="description-text">
-                    🏗️ Monthly progress showing payment outflows (bars) and category diversity (line).
-                    Track both financial progress and scope of work being executed.
+                    🏗️ Comprehensive project progress analysis showing:
+                    - Monthly outflows and category diversity
+                    - Category-wise expenditure breakdown
+                    - Cumulative project spending trend
                 </div>
             """, unsafe_allow_html=True)
             
         except Exception as e:
             st.error(f"Error creating progress analysis: {str(e)}")
+            st.info("Please check the data structure and try again.")
 
 def main():
     st.title("Project Management Dashboard")
