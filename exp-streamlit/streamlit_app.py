@@ -799,7 +799,7 @@ def main():
                 # Display selected analysis
                 if page == "Sales Analysis":
                     create_enhanced_sales_analysis(sales_df)
-                else:
+                elif:
                     create_financial_analysis(bank_df, outflow_df)
                 else:
                     # Load account data
