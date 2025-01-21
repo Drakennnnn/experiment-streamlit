@@ -94,6 +94,39 @@ def standardize_bhk(bhk_value):
         bhk_str = bhk_str + 'BHK'
     return bhk_str
 
+def load_bank_data(file):
+    """Load and process bank balance data"""
+    df = pd.read_excel(file, sheet_name="Bank Balances", header=None)
+    
+    # Find header row
+    header_row = df[df[0] == 'A/c #'].index[0]
+    headers = df.iloc[header_row]
+    df = df.iloc[header_row + 1:].copy()
+    df.columns = headers
+    
+    # Convert numeric columns
+    numeric_cols = ['Credit', 'Debit', 'Balance']
+    for col in numeric_cols:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+    
+    return df.dropna(subset=['Balance'])
+
+def load_outflow_data(file):
+    """Load and process project outflow data"""
+    try:
+        df = pd.read_excel(file, sheet_name="Project Outflow Statement")
+        
+        # Convert date and amount columns
+        if 'Date of Payment' in df.columns:
+            df['Date of Payment'] = pd.to_datetime(df['Date of Payment'], errors='coerce')
+        if 'Gross Amount' in df.columns:
+            df['Gross Amount'] = pd.to_numeric(df['Gross Amount'], errors='coerce')
+        
+        return df.dropna(subset=['Gross Amount'])
+    except:
+        return None
+
 def load_sales_data(file):
     """Load and process sales data with standardized BHK notation"""
     df = pd.read_excel(file, sheet_name="Monthly Sale Tracker ", header=None)
